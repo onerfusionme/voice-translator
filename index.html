@@ -45,7 +45,7 @@
         }
     </style>
 </head>
-<body class="flex items-center justify-center min-h-screen">
+<body class="flex items-center justify-center min-h-screen py-8">
 
     <div class="w-full max-w-4xl mx-auto p-4 md:p-8">
         <div class="bg-white rounded-2xl shadow-lg p-6 md:p-8 space-y-6">
@@ -53,7 +53,7 @@
             <!-- Header -->
             <div class="flex items-center justify-center gap-4">
                 <img src="https://googleusercontent.com/file_content/1" alt="KVV Logo" class="h-16 w-auto" onerror="this.style.display='none'">
-                <h1 class="text-2xl md:text-3xl font-bold text-kvv-blue">KRISHNA VISHWA VIDYAPEETH</h1>
+                <h1 class="text-2xl md:text-3xl font-bold text-kvv-blue text-center">KRISHNA VISHWA VIDYAPEETH</h1>
             </div>
 
             <!-- Action Buttons and Status -->
@@ -73,6 +73,10 @@
                  <button id="clear-btn" class="flex items-center justify-center gap-2 w-full sm:w-auto bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg transition-all">
                     <i class="fas fa-trash"></i>
                     <span>Clear</span>
+                </button>
+                 <button id="export-btn" class="flex items-center justify-center gap-2 w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-6 rounded-lg transition-all">
+                    <i class="fas fa-file-word"></i>
+                    <span>Export</span>
                 </button>
             </div>
             <div id="status" class="text-center text-gray-600 font-medium h-6 mt-2"></div>
@@ -104,7 +108,7 @@
             </div>
              <!-- Message Box -->
             <div id="message-box" class="hidden fixed top-5 right-5 bg-kvv-blue text-white py-2 px-4 rounded-lg shadow-lg transition-opacity duration-300">
-                Text copied to clipboard!
+                Message
             </div>
         </div>
     </div>
@@ -116,6 +120,7 @@
             const stopBtn = document.getElementById('stop-btn');
             const translateBtn = document.getElementById('translate-btn');
             const clearBtn = document.getElementById('clear-btn');
+            const exportBtn = document.getElementById('export-btn');
             const statusDiv = document.getElementById('status');
             const sourceLangSelect = document.getElementById('source-lang');
             const targetLangSelect = document.getElementById('target-lang');
@@ -126,7 +131,6 @@
             const messageBox = document.getElementById('message-box');
 
             // --- Language Definitions ---
-            // List of languages with their codes for Speech Recognition (BCP 47) and Translation API (ISO 639-1)
             const languages = [
                 { name: 'English (US)', speechCode: 'en-US', translateCode: 'en' },
                 { name: 'French', speechCode: 'fr-FR', translateCode: 'fr' },
@@ -144,16 +148,13 @@
             // --- Initial Setup ---
             function populateLanguageDropdowns() {
                 languages.forEach(lang => {
-                    // Populate source dropdown
                     const sourceOption = new Option(lang.name, lang.speechCode);
                     sourceOption.dataset.translateCode = lang.translateCode;
                     sourceLangSelect.add(sourceOption);
 
-                    // Populate target dropdown
                     const targetOption = new Option(lang.name, lang.translateCode);
                     targetLangSelect.add(targetOption);
                 });
-                // Set default languages
                 sourceLangSelect.value = 'fr-FR';
                 targetLangSelect.value = 'en';
             }
@@ -163,6 +164,7 @@
             // --- Speech Recognition Setup ---
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             let recognition;
+            let finalTranscript = ''; // Accumulates final transcript parts
 
             if (SpeechRecognition) {
                 recognition = new SpeechRecognition();
@@ -170,15 +172,25 @@
                 recognition.interimResults = true;
 
                 recognition.onstart = () => {
+                    finalTranscript = ''; // Reset transcript for new session
                     statusDiv.textContent = 'Listening...';
                     startBtn.disabled = true;
                     stopBtn.disabled = false;
                     startBtn.classList.add('pulsing');
                 };
 
+                // **MODIFIED:** This logic no longer overwrites the text area, allowing for manual edits.
                 recognition.onresult = (event) => {
-                    const transcript = Array.from(event.results).map(r => r[0]).map(r => r.transcript).join('');
-                    sourceText.value = transcript;
+                    let interimTranscript = '';
+                    for (let i = event.resultIndex; i < event.results.length; ++i) {
+                        if (event.results[i].isFinal) {
+                            finalTranscript += event.results[i][0].transcript;
+                        } else {
+                            interimTranscript += event.results[i][0].transcript;
+                        }
+                    }
+                    // Show live interim results in status, not in the main text area
+                    statusDiv.textContent = interimTranscript || 'Listening...';
                 };
 
                 recognition.onerror = (event) => {
@@ -187,6 +199,8 @@
                 };
 
                 recognition.onend = () => {
+                    // **MODIFIED:** Append the final result to the text area.
+                    sourceText.value += (sourceText.value.length > 0 ? ' ' : '') + finalTranscript;
                     statusDiv.textContent = 'Stopped listening. Press Translate to convert.';
                     startBtn.disabled = false;
                     stopBtn.disabled = true;
@@ -195,13 +209,13 @@
 
             } else {
                 statusDiv.textContent = "Sorry, your browser doesn't support Speech Recognition.";
-                [startBtn, stopBtn, translateBtn, clearBtn].forEach(btn => btn.disabled = true);
+                [startBtn, stopBtn, translateBtn, clearBtn, exportBtn].forEach(btn => btn.disabled = true);
             }
 
             // --- Event Listeners ---
             startBtn.addEventListener('click', () => {
                 if (recognition) {
-                    recognition.lang = sourceLangSelect.value; // Set language before starting
+                    recognition.lang = sourceLangSelect.value;
                     recognition.start();
                 }
             });
@@ -234,47 +248,111 @@
                 }
             });
             
-            // --- Clipboard and Helper Functions ---
-            const showCopyMessage = () => {
+            // **NEW:** Export to Word button listener
+            exportBtn.addEventListener('click', () => {
+                if (targetText.value.trim()) {
+                    exportToWord(targetText.value);
+                } else {
+                    showMessage("Nothing to export. Please translate some text first.");
+                }
+            });
+            
+            // --- Helper Functions ---
+            const showMessage = (text) => {
+                messageBox.textContent = text;
                 messageBox.classList.remove('hidden');
-                setTimeout(() => messageBox.classList.add('hidden'), 2000);
+                setTimeout(() => messageBox.classList.add('hidden'), 3000);
             };
 
             copySourceBtn.addEventListener('click', () => {
                 if(sourceText.value) {
-                    sourceText.select();
-                    document.execCommand('copy');
-                    showCopyMessage();
+                    navigator.clipboard.writeText(sourceText.value);
+                    showMessage("Source text copied!");
                 }
             });
 
             copyTargetBtn.addEventListener('click', () => {
                 if(targetText.value) {
-                    targetText.select();
-                    document.execCommand('copy');
-                    showCopyMessage();
+                    navigator.clipboard.writeText(targetText.value);
+                    showMessage("Translated text copied!");
                 }
             });
 
+            // **NEW:** Export to Word function
+            function exportToWord(text) {
+                const header = "<html xmlns:o='urn:schemas-microsoft-com:office:office' "+
+                    "xmlns:w='urn:schemas-microsoft-com:office:word' "+
+                    "xmlns='http://www.w3.org/TR/REC-html40'>"+
+                    "<head><meta charset='utf-8'><title>Export HTML to Word Document</title></head><body>";
+                const footer = "</body></html>";
+                const sourceHTML = header + text.replace(/\n/g, '<br>') + footer;
+
+                const source = 'data:application/vnd.ms-word;charset=utf-8,' + encodeURIComponent(sourceHTML);
+                const fileDownload = document.createElement("a");
+                document.body.appendChild(fileDownload);
+                fileDownload.href = source;
+                fileDownload.download = 'translation.doc';
+                fileDownload.click();
+                document.body.removeChild(fileDownload);
+                showMessage("Exporting to Word...");
+            }
+
             // --- Translation Logic ---
+            // **MODIFIED:** New chunking logic and sequential API calls for better stability.
             async function translateText(text, sourceLang, targetLang) {
                 statusDiv.textContent = 'Translating...';
                 targetText.value = '';
 
-                const MAX_CHUNK_LENGTH = 450;
-                const chunks = text.length > MAX_CHUNK_LENGTH ? (text.match(/[^.!?]+[.!?]*/g) || [text]) : [text];
-                
-                try {
-                    const translationPromises = chunks.map(chunk => {
-                        if (!chunk.trim()) return Promise.resolve(null);
-                        const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`;
-                        return fetch(apiUrl).then(res => res.ok ? res.json() : Promise.reject(`API error: ${res.statusText}`));
-                    });
+                const MAX_CHUNK_LENGTH = 480; // Stay safely under the 500 char limit
 
-                    const translatedChunks = await Promise.all(translationPromises);
-                    const fullTranslation = translatedChunks.map(data => data?.responseData?.translatedText || '').join(' ');
+                // More robust chunking function
+                function createChunks(text, limit) {
+                    const chunks = [];
+                    let i = 0;
+                    while (i < text.length) {
+                        let chunk = text.substring(i, i + limit);
+                        let lastSpace = chunk.lastIndexOf(' ');
+                        // If there is a space and it's not the end of the text, split at the space
+                        if (lastSpace !== -1 && i + chunk.length < text.length) {
+                            chunk = chunk.substring(0, lastSpace);
+                            i += lastSpace + 1;
+                        } else {
+                            i += limit;
+                        }
+                        chunks.push(chunk);
+                    }
+                    return chunks;
+                }
+
+                const chunks = createChunks(text, MAX_CHUNK_LENGTH);
+                let fullTranslation = '';
+
+                try {
+                    for (const [index, chunk] of chunks.entries()) {
+                         if (!chunk.trim()) continue;
+                        
+                        statusDiv.textContent = `Translating chunk ${index + 1} of ${chunks.length}...`;
+                        
+                        const apiUrl = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(chunk)}&langpair=${sourceLang}|${targetLang}`;
+                        const response = await fetch(apiUrl);
+                        
+                        if (!response.ok) {
+                            throw new Error(`API error for chunk ${index + 1}: ${response.statusText}`);
+                        }
+                        
+                        const data = await response.json();
+                        
+                        if (data.responseData && data.responseData.translatedText) {
+                            fullTranslation += data.responseData.translatedText + ' ';
+                        } else {
+                            console.warn(`Chunk ${index + 1} translation failed or returned empty.`, data);
+                        }
+                        
+                        // Small delay to avoid overwhelming the API
+                        await new Promise(resolve => setTimeout(resolve, 200)); 
+                    }
                     
-                    targetText.value = fullTranslation;
+                    targetText.value = fullTranslation.trim();
                     statusDiv.textContent = 'Translation complete.';
 
                 } catch (error) {
